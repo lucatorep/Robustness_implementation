@@ -11,7 +11,7 @@ Collection of scripts to analyse:
 - Microscopy images (preprocessing and biosensor output).
   
 <br />
-<br />
+
 Getting started:
 
 1. Install R (https://cran.r-project.org/), RStudio (https://posit.co/download/rstudio-desktop/) and then the RMarkdown package in R (https://rmarkdown.rstudio.com/). No need to pre-install other packages needed for the scripts as they will be installed automatically (if they are not already).
