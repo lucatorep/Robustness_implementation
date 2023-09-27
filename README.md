@@ -11,9 +11,11 @@ Getting started:
 
 1. Install R (https://cran.r-project.org/), RStudio (https://posit.co/download/rstudio-desktop/) and then the RMarkdown package in R (https://rmarkdown.rstudio.com/). No need to pre-install other packages needed for the scripts as they will be installed automatically (if they are not already).
 2. Install Fiji (Fiji: https://imagej.net/software/fiji/downloads), if microscopy images need to be analysed.
-3. Always check the data organisation in the example file provided in the Script+Data folder (Data_Example_Analysis.xlsx).
+3. Always check the data organisation in the example files provided.
 4. Follow the directions in the scripts and macros (details before each chunk and important sections of scripts).
 5. Make changes upon need (replace grouping variables, way of importing data, etc.).
+
+
 
 ----
 Luca Torello Pianale, lucat@chalmers.se
