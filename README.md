@@ -6,6 +6,8 @@ Collection of scripts to analyse:
 - BioLector I data coming from multiple screenings. For analysing of individual screenings, please check ScEnSor Kit Scripts (https://github.com/lucatorep/ScEnSor-Kit-Scripts).
 - Flask data coming from Scientific Bioprocessing biomass monitoring, but easily adapted to other setups + HPLC data.
 - Microscopy images (preprocessing and biosensor output).
+  
+
 
 Getting started:
 
@@ -17,8 +19,11 @@ Getting started:
 
 
 
+
+
 ----
 Luca Torello Pianale, lucat@chalmers.se
+
 Chalmers University of Technology, Department of Life Sciences, Industrial Biotechnology Division. 
 
 Created: October, 2023.
