@@ -1,14 +1,17 @@
-# Robustness_implementation
+# Robustness implementation in your data analysis
+<br />
 
 _NOTE._ This collection of scripts and macros has been developed for the following publication: XXX
 
+<br />
 Collection of scripts to analyse: 
+
 - BioLector I data coming from multiple screenings. For analysing of individual screenings, please check ScEnSor Kit Scripts (https://github.com/lucatorep/ScEnSor-Kit-Scripts).
 - Flask data coming from Scientific Bioprocessing biomass monitoring, but easily adapted to other setups + HPLC data.
 - Microscopy images (preprocessing and biosensor output).
   
-
-
+<br />
+<br />
 Getting started:
 
 1. Install R (https://cran.r-project.org/), RStudio (https://posit.co/download/rstudio-desktop/) and then the RMarkdown package in R (https://rmarkdown.rstudio.com/). No need to pre-install other packages needed for the scripts as they will be installed automatically (if they are not already).
@@ -16,12 +19,10 @@ Getting started:
 3. Always check the data organisation in the example files provided.
 4. Follow the directions in the scripts and macros (details before each chunk and important sections of scripts).
 5. Make changes upon need (replace grouping variables, way of importing data, etc.).
-
-
-
-
+<br />
 
 ----
+
 Luca Torello Pianale, lucat@chalmers.se
 
 Chalmers University of Technology, Department of Life Sciences, Industrial Biotechnology Division. 
