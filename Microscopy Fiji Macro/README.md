@@ -1,5 +1,6 @@
 Here are the files for microscopy analysis: 
-  - Fiji Macro
+  - Fiji Macro file
+  - Macro overview as HTML
   - Input folder (zipped, unzip to extract data prior to use)
   - Output folder (zipped, unzip to extract data prior to use)
 
