@@ -1,0 +1,588 @@
+---
+title: "Aquila Analysis"
+author: "Luca Torello Pianale"
+date: "March 2023"
+header-includes:
+  - \usepackage{fvextra}
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaksymbolleft={},showspaces = false,showtabs = false,breaklines,commandchars=\\\{\}}
+output:
+  pdf_document: default
+  html_document: default
+---
+
+### SCOPE OF THE MARKDOWN
+
+This code is used to analyse the data coming from Aquila runs.
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, 
+                      tidy = "styler", fig.width = 10, fig.height = 12)
+
+```
+\newpage  
+
+# LIBRARIES
+
+Automated installation (if needed) and loading of libraries required for this script.  
+The packages "tidyverse" and "rstatix" are needed for smooth data and statistical analysis. 
+The packages "readxl" and "writexl" are needed to import and export the data.  
+The packages "ggpubr" and "ggplot2" are needed for plotting. 
+The packages "deSolve" and "growthrates" are needed for specific growth rates and lag phases.  
+
+```{r Libraries}
+
+#R Version used
+R.Version()[["version.string"]]
+
+#Libraries
+requiredPackages <- c("tidyverse", "ggplot2", "ggpubr", "readxl", "writexl", "rstatix", "deSolve", "growthrates")
+
+ipak <- function(pkg){
+        new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+        if (length(new.pkg))
+                install.packages(new.pkg, dependencies = TRUE)
+        sapply(pkg, require, character.only = TRUE)
+}
+
+ipak(requiredPackages)
+```
+\newpage  
+
+# DATA ANALYSIS
+
+## Define general info
+
+Assign the file path in the computer to the variables "folder" and "file".  
+The R file should be in the same folder to use command getwd() in this context! Moreover, the files should be in .xlsx format. Note that, sometimes, files will not load in R if it is open in excel!
+
+FYI: Soft Wood (Spruce), Hard Wood (Birch), Non-Woody (oat & corn - annual, bagasse & wheat - perennial)
+
+```{r Data_preparation}
+
+#Paths
+folder <- getwd()
+setwd(folder)
+input_folder <- paste0(folder, "/Input_data")
+input_files <- paste0("/", list.files(input_folder)[endsWith(list.files(input_folder), "_OK.xlsx")])
+
+#General info
+info <- list(media = c("Delft", "SLRH50", "HGSH50", "BiH50",
+                       "WSH50", "SBH50", "CSH50", "OHH50"),
+             colors_media = c("#5A5A5A", "#c2a5cf", "#A45BBD", "#7B5FCA",
+                              "#e5f5f9", "#99d8c9", "#41ae76", "#006d2c"),
+             materials = c("All", "NON-Woody", "Woody"),
+             strains = c("CEN.PK113-7D", "EthanolRed", "PE2"),
+             colors_strains = c("#333333", "#FC8D62", "#89ADFF"),
+             Functions = c("mumax", "lag", "yCDW", "yEth", "yGly", "yAAc"),
+             Functions_units_x =  c(lag = "Lag Phase (h)",
+                                   mumax = "Specific Growth\nRate (1/h)",
+                                   yEth = "Ethanol Yield\n(g/g)",
+                                   yGly = "Glycerol Yield\n(g/g)",
+                                   yAAc = "Acetic Acid Yield\n(g/g)",
+                                   yCDW = "Cell Mass Yield\n(g/g)"),
+             Functions_units_y =  c(lag = "Lag Phase (h)",
+                                   mumax = "Specific Growth\nRate (1/h)",
+                                   yEth = "Ethanol Yield\n(g/g)",
+                                   yGly = "Glycerol Yield\n(g/g)",
+                                   yAAc = "Acetic Acid Yield\n(g/g)",
+                                   yCDW = "Cell Mass Yield\n(g/g)"))
+```
+
+## Load Data
+
+```{r Data_preparation}
+
+#Load summary
+summary <- read_excel(paste0(input_folder, "/Layout.xlsx"), 
+                      sheet = "layout", col_names = TRUE)
+
+#Load data
+all_data <- data.frame()
+
+for (k in input_files) {
+  list <- excel_sheets(paste0(input_folder, k))
+  df2 <- data.frame()
+  for (i in list) {
+    df1 <- read_excel(paste0(input_folder, k), sheet = i, col_names = TRUE) %>%
+      as.data.frame() %>%
+      mutate(strain = case_when(startsWith(k, "/CEN") ~ "CEN.PK113-7D",
+                                startsWith(k, "/Eth") ~ "EthanolRed",
+                                startsWith(k, "/PE") ~ "PE2")) %>%
+      cbind(position = gsub("(.+)-(.+)", "\\2", i),
+            station = gsub("(.+)-(.+)", "\\1", i)) 
+    
+    df2 <- bind_rows(df2, df1)
+    rm(df1)
+  }
+  
+  df2 <- merge(df2, summary, all.x = T) %>%
+    select(-c(position, station))
+  
+  all_data <- bind_rows(all_data, df2) 
+  rm(df2, list)
+  }
+
+#Reorganise data
+all_data <- all_data %>%
+  filter(medium %in% info[["media"]]) %>%
+  rename(value = backscatter) %>%
+  group_by(strain, medium, replicate) %>%
+  arrange(time, .by_group = T) %>%
+  mutate(value = value/first(value), #Normalise by first value
+         across(where(is.numeric), ~ round(.,4)))
+
+#Clean environment
+rm(summary, i, k, input_files)
+```
+\newpage  
+
+# GROWTH FunctionS
+
+## Mu and Lag
+
+Computing specific growth rates (mumax) and lag phases + statistical analysis.
+
+```{r Growth_Check}
+
+#Analysis of the growth curves for mumax. Note: in the output graphs the inflection point and the fitting curve are shown.
+many_spline_fits <- all_splines(value ~ time | strain + medium + replicate,
+                                data = subset(all_data, time > 4), spar = 0.3) 
+#par(mfrow = c(8, 8)) 
+#par(mar = rep(1, 4)) 
+#plot(many_spline_fits) 
+growth_param <- results(many_spline_fits) %>%
+  remove_rownames       #Saving the results
+
+
+#Calculate lambda (lag phase): the coordinates of the inflection point have been extracted and used to calculate the tangent and subsequently the x value corresponding to the lag phase.
+
+inf_points <- NULL
+
+for (i in 1:length(many_spline_fits@fits)){
+  tmp <- many_spline_fits@fits[[i]]@xy
+  inf_points <- rbind(inf_points, tmp)
+  rm(tmp)
+}
+
+inf_points <- as.data.frame(inf_points)
+
+growth_param <- bind_cols(growth_param, inf_points) %>%
+  rename(., x = V1, y = V2) %>%
+  mutate(lag = ((log10(y0) - log10(y)) / mumax) + x) %>%
+  select(-c(x, y, y0, r2)) %>%
+  pivot_longer(c(lag, mumax), names_to = "Function", values_to = "value")
+
+#Rearrange data 
+growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %in% c("HGSH50", "BiH50", "SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 1] <- 48
+growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %in% c("HGSH50", "BiH50", "SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 2] <- 47.9
+growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %in% c("HGSH50", "BiH50", "SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 3] <- 47.99
+
+growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %in% c("HGSH50", "BiH50", "SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 1] <- 0.001
+growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %in% c("HGSH50", "BiH50", "SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 2] <- 0.0011
+growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %in% c("HGSH50", "BiH50", "SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 3] <- 0.0012
+
+
+growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OHH50", "WSH50", "BiH50", "SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 1] <- 48
+growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OHH50", "WSH50", "BiH50", "SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 2] <- 47.9
+growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OHH50", "WSH50", "BiH50", "SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 3] <- 47.99
+
+growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OHH50", "WSH50", "BiH50", "SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 1] <- 0.001
+growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OHH50", "WSH50", "BiH50", "SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 2] <- 0.0011
+growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OHH50", "WSH50", "BiH50", "SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 3] <- 0.0012
+
+
+growth_param$value[growth_param$strain == "EthanolRed" & growth_param$medium %in% c("SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 1] <- 48
+growth_param$value[growth_param$strain == "EthanolRed" & growth_param$medium %in% c("SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 2] <- 47.9
+growth_param$value[growth_param$strain == "EthanolRed" & growth_param$medium %in% c("SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 3] <- 47.99
+
+growth_param$value[growth_param$strain == "EthanolRed" & growth_param$medium %in% c("SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 1] <- 0.001
+growth_param$value[growth_param$strain == "EthanolRed" & growth_param$medium %in% c("SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 2] <- 0.0011
+growth_param$value[growth_param$strain == "EthanolRed" & growth_param$medium %in% c("SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 3] <- 0.0012
+
+#Statistical comparison of different media with respect to the control "Delft".
+Stats_medium <- compare_means(value~medium, data = growth_param, 
+                              group.by = c("strain", "Function"), 
+                              method = "t.test", ref.group = "Delft") %>% 
+  add_significance("p.adj") 
+
+#Clean environment
+rm(i, inf_points, many_spline_fits)
+```
+
+## Yields
+
+Computing yields.
+
+```{r Yields}
+
+#Cell mass
+cell_mass <- read_excel(paste0(input_folder, "/Data_HPLC+CDW.xlsx"), 
+                        sheet = "cdw", col_names = TRUE) %>%
+  select(strain, timepoint, medium, replicate, cellmass_gL)
+
+df1 <- subset(cell_mass, timepoint == "start") %>%
+  group_by(strain) %>%
+  transmute(CDW_i = mean(cellmass_gL)) %>%
+  distinct()
+
+df2 <- subset(cell_mass, timepoint == "end") %>%
+  rename(CDW_f = cellmass_gL) %>%
+  select(-c(timepoint))
+
+cell_mass <- merge(df1, df2)
+
+
+#Media components
+yields <- read_excel(paste0(input_folder, "/Data_HPLC+CDW.xlsx"), 
+                     sheet = "media_composition", col_names = TRUE)
+
+df1 <- subset(yields, timepoint == "start") %>%
+  select(-timepoint) %>%
+  rename_with(~paste0(.,"_i"), -c(strain, medium, replicate)) %>%
+  select(-replicate)
+
+df2 <- subset(yields, timepoint == "end") %>%
+  select(-timepoint) %>%
+  rename_with(~paste0(.,"_f"), -c(strain, medium, replicate)) 
+
+yields <- merge(df2, df1, all.x = T) %>%
+  merge(., cell_mass)
+
+yields[is.na(yields)] <- 0
+
+#Compute yields
+yields <- yields %>%
+  mutate(hexoses = Glu_i-Glu_f+Gal_i-Gal_f+Man_i-Man_f) %>%
+  transmute(strain = strain, 
+            medium = medium, 
+            replicate = replicate, 
+            yEth = (Eth_f-Eth_i)/hexoses,
+            yGly = (Gly_f-Gly_i)/hexoses,
+            yCDW = (CDW_f-CDW_i)/hexoses) %>%
+  pivot_longer(., cols = names(.)[startsWith(names(.), "y")], 
+               names_to = "Function", values_to = "value") 
+
+
+#Merge with mu and lag
+growth_param <- bind_rows(growth_param, yields) %>%
+  mutate(material = case_when(medium %in% c("SLRH50", "HGSH50", "BiH50") ~ "Woody",
+                              medium %in% c("CSH50", "OHH50", "WSH50", "SBH50") ~ "NON-Woody")) %>%
+  rbind(., mutate(., material = "All")) %>%
+  drop_na(., material)
+
+#Clean environment
+rm(cell_mass, yields, list = ls()[startsWith(ls(), "df")])
+```
+\newpage  
+
+# ROBUSTNESS
+
+```{r Robustness}
+
+#Compute Robustness for all the functions
+R_growth <- growth_param %>%
+  ungroup() %>%
+  group_by(strain, Function, material) %>%
+  transmute(mean_value = mean(value), 
+            sd_value = sd(value),
+            R = -sd_value^2/mean_value,
+            value = value) %>%
+  ungroup() %>%
+  group_by(Function, material) %>%
+  transmute(strain = strain, 
+            mean_value = mean_value, 
+            sd_value = sd_value,
+            R = R,
+            mean_strains = mean(value),
+            R_norm = R/mean_strains)
+
+
+R_s <- growth_param %>%
+  ungroup() %>%
+  group_by(medium, Function, material) %>%
+  transmute(mean_value = mean(value), 
+            sd_value = sd(value),
+            R = -sd_value^2/mean_value,
+            value = value) %>%
+  ungroup() %>%
+  group_by(Function, material) %>%
+  transmute(medium = medium, 
+            mean_value = mean_value, 
+            sd_value = sd_value,
+            R = R,
+            mean_media = mean(value),
+            R_norm = R/mean_media)
+```
+
+# EXPORT DATA.
+
+AA.  
+
+```{r Export_data}
+
+#Export robustness data frames in an .xlsx file (same file, different sheets)
+name <- "/Data_Analysed"
+sheets <- list("Data" = all_data, 
+               "Growth_Param" = growth_param, 
+               "Robustness" = R_growth) 
+write_xlsx(sheets, path = paste0(folder, name, ".xlsx"), use_zip64 = T)
+
+#Clean environment
+rm(sheets, name)
+```
+\newpage
+# PLOTTING.  
+
+## Data Re-organisation  
+<br>
+```{r Data_reorganisation, echo = FALSE}
+
+#Re-organising data frames for plotting
+for (i in names(Filter(is.data.frame, as.list(.GlobalEnv)))) {
+  assign(i, eval(as.symbol(i)) %>%
+           mutate(across(any_of(c("strain")), 
+                         ~factor(strain, levels = info[["strains"]])),
+                  across(any_of(c("material")), 
+                         ~factor(material, levels = info[["materials"]])),
+                  across(any_of(c("medium")), 
+                         ~factor(medium, levels = info[["media"]])),
+                  across(any_of(c("Function")), 
+                         ~factor(Function, levels = info[["Functions"]]))))
+  }
+```
+\newpage  
+## Growth curves
+
+```{r Growth_curves}
+
+lineplots <- ggplot(data = all_data %>% 
+                      mutate(value = log(value), 
+                             medium = factor(medium, levels = info[["media"]]))) + 
+  aes(x = time, y = value, colour = strain) +
+  stat_summary(fun = mean, geom = "line", linewidth = 1) +
+  stat_summary(fun.data = mean_sdl, geom = "errorbar", 
+               fun.args = list(mult = 1), width = 0.05, alpha = 0.1) +
+  scale_x_continuous(breaks = seq(from = 0, 
+                                  to = max(unique(all_data$time)), 
+                                  by = 12)) +
+  scale_y_continuous(labels = function(x) format(x, nsmall = 1)) +
+  scale_color_manual(breaks = info[["strains"]], 
+                     values = info[["colors_strains"]]) +
+  labs(y = "ln(Norm. Scattered Light) (a.u.)\n", x = "\nTime (h)") +
+  facet_wrap(~medium, nrow = 2) +
+  theme_light()+ 
+  theme(legend.position = "top",
+        axis.title = element_text(size = 11),
+        axis.text = element_text(size = 11),
+        panel.grid.minor = element_blank(),
+        panel.spacing.x = unit(1, "lines"), 
+        strip.background = element_rect(colour = "white", fill = "black"),
+        strip.text = element_text(size = 11, face = "bold.italic"),
+        plot.margin = unit(c(0.6, 0.6, 0.6, 0.6), "cm"))
+
+#lineplots
+```
+\newpage  
+## Barplots for functions
+
+```{r Functions}
+
+barplots <- ggplot(data = subset(growth_param, material == "All")) + 
+  aes(x = medium, y = value) +
+  stat_summary(aes(fill = medium), fun = mean, geom = "bar", 
+               position = position_dodge(width = 0.9),
+              # color = "black", linewidth = 0.5
+               ) +
+  stat_summary(fun.data = mean_sdl, geom = "errorbar", 
+               fun.args = list(mult = 1),
+               width = 0.1, position = position_dodge(width = 0.9)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)), 
+                     labels = function(x) format(x, nsmall = 1),
+                     breaks = scales::extended_breaks(n = 3)) +
+  scale_fill_manual(breaks = info[["media"]], 
+                    values = info[["colors_media"]]) +
+  facet_grid(cols = vars(strain),
+             rows = vars(Function),
+             switch = "y", scales = "free",
+             labeller = labeller(Function = info[["Functions_units_y"]])) +
+  labs(x = "", y = "") +
+  guides(fill = guide_legend(ncol = 1)) +
+  theme_light() +
+  theme(legend.position = "right",
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 9),
+        axis.ticks.x = element_blank(),
+        strip.placement.y = "outside",
+        strip.background.x = element_rect(colour = "black", fill = "black"),
+        strip.background.y = element_blank(),
+        strip.text.x = element_text(size = 9, face = "bold.italic", colour = "white"),
+        strip.text.y = element_text(size = 9, colour = "black"),
+        panel.spacing.x = unit(1, "lines"),
+        panel.spacing.y = unit(0.7, "lines"), 
+        panel.grid.minor = element_blank(), 
+        panel.grid.major.x = element_blank(),
+        plot.margin = unit(rep(0.3, 4), "cm"))
+
+#barplots
+```
+\newpage  
+## Robustness
+
+```{r Robustness}
+
+Rc_Perf <- ggplot(data = subset(R_growth, material == "All")) +
+  geom_point(aes(x = mean_value, y = R_norm, color = strain), size = 3) +
+  geom_errorbarh(aes(xmax = mean_value + sd_value, 
+                     xmin = mean_value - sd_value, 
+                     y = R_norm, color = strain), height = 0) +
+  labs(x = NULL, 
+       y = "R(c) (a.u.)\n") +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.1)), 
+                     labels = function(x) format(x, nsmall = 1),
+                     limits = c(NA, 0),
+                     breaks = scales::extended_breaks(n = 3)) +
+  scale_x_continuous(breaks = scales::extended_breaks(n = 4, 
+                                                      w = c(0.25, 0.2, 0.9, 0.05))) +
+  facet_wrap(~Function, ncol = 3,
+             scales = "free",  strip.position = "bottom",
+             labeller = labeller(Function = info[["Functions_units_x"]])) +
+  scale_color_manual(breaks = info[["strains"]], 
+                     values = info[["colors_strains"]]) +
+  theme_light() +
+  theme(legend.position = c(0.87, 0.18), #(1,1) top right, (0,0) bottom left
+        legend.background = element_rect(linewidth = 0.2, 
+                                         colour = "black",
+                                         linetype = "solid"),
+        axis.text.x = element_text(size = 9),
+        axis.text.y = element_text(size = 9),
+        strip.placement = "outside",
+        strip.background.y = element_rect(colour = "black", fill = "black"),
+        strip.background.x = element_blank(),
+        strip.text.y = element_text(size = 9, face = "bold.italic", colour = "white"),
+        strip.text.x = element_text(size = 9, colour = "black"),
+        panel.spacing.x = unit(1, "lines"),
+        panel.spacing.y = unit(1.5, "lines"), 
+        panel.grid.minor = element_blank(), 
+        plot.margin = unit(rep(0.3, 4), "cm"))
+
+Rs_Perf <- ggplot(data = subset(R_s, material == "All")) +
+  geom_point(aes(x = mean_value, y = R_norm, color = medium), size = 3) +
+  geom_errorbarh(aes(xmax = mean_value + sd_value, 
+                     xmin = mean_value - sd_value, 
+                     y = R_norm, color = medium), height = 0) +
+  labs(x = NULL, 
+       y = "R(s) (a.u.)\n") +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.1)), 
+                     labels = function(x) format(x, nsmall = 1),
+                     limits = c(NA, 0),
+                     breaks = scales::extended_breaks(n = 3)) +
+  scale_x_continuous(breaks = scales::extended_breaks(n = 4, 
+                                                      w = c(0.25, 0.2, 0.9, 0.05))) +
+  facet_wrap(~Function, ncol = 3,
+             scales = "free",  strip.position = "bottom",
+             labeller = labeller(Function = info[["Functions_units_x"]])) +
+  scale_color_manual(breaks = info[["media"]], 
+                     values = info[["colors_media"]]) +
+  guides(color = guide_legend(ncol = 2)) + 
+  theme_light() +
+  theme(legend.position = c(0.85, 0.18), #(1,1) top right, (0,0) bottom left
+        legend.background = element_rect(linewidth = 0.2, 
+                                         colour = "black",
+                                         linetype = "solid"),
+        axis.text.x = element_text(size = 9),
+        axis.text.y = element_text(size = 9),
+        strip.placement = "outside",
+        strip.background.y = element_rect(colour = "black", fill = "black"),
+        strip.background.x = element_blank(),
+        strip.text.y = element_text(size = 9, face = "bold.italic", colour = "white"),
+        strip.text.x = element_text(size = 9, colour = "black"),
+        panel.spacing.x = unit(1, "lines"),
+        panel.spacing.y = unit(1.5, "lines"), 
+        panel.grid.minor = element_blank(), 
+        plot.margin = unit(rep(0.3, 4), "cm"))
+
+Rc_Perf_material <- ggplot(data = subset(R_growth, material != "All")) +
+  geom_point(aes(x = mean_value, y = R_norm, color = strain, shape = ), size = 3) +
+  geom_errorbarh(aes(xmax = mean_value + sd_value, 
+                     xmin = mean_value - sd_value, 
+                     y = R_norm, color = strain), height = 0) +
+  labs(x = NULL, y = "R(c) (a.u.)\n") +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.1)), 
+                     labels = function(x) format(x, nsmall = 1),
+                     limits = c(NA, 0)) +
+  facet_grid(cols = vars(Function), rows = vars(material), 
+             scales = "free",  switch = "x",
+             labeller = labeller(Function = info[["Functions_units_x"]])) +
+  scale_color_manual(breaks = info[["strains"]], 
+                     values = info[["colors_strains"]]) +
+  theme_light() +
+  theme(legend.position = "top", 
+        axis.text.x = element_text(size = 9, angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 9),
+        strip.placement = "outside",
+        strip.background.y = element_rect(colour = "black", fill = "black"),
+        strip.background.x = element_blank(),
+        strip.text.y = element_text(size = 9, face = "bold.italic", colour = "white"),
+        strip.text.x = element_text(size = 9, colour = "black"),
+        panel.spacing.x = unit(1.3, "lines"),
+        panel.spacing.y = unit(0.7, "lines"), 
+        panel.grid.minor = element_blank(), 
+        plot.margin = unit(rep(0.3, 4), "cm"))
+
+```
+\newpage  
+## Saving Figures
+
+```{r Save_Figures}
+
+#Figures
+ggsave(filename = "Rc_Perf.png", 
+       plot = Rc_Perf, device = "png", path = folder, 
+       width = 16, height = 11, unit = "cm", dpi = 300)
+
+ggsave(filename = "Rs_Perf.png", 
+       plot = Rs_Perf, device = "png", path = folder, 
+       width = 16, height = 11, unit = "cm", dpi = 300)
+
+ggsave(filename = "Rc_Perf_material.png", 
+       plot = Rc_Perf_material, device = "png", path = folder, 
+       width = 20, height = 11, unit = "cm", dpi = 300)
+
+ggsave(filename = "Lineplots.png", 
+       plot = lineplots, device = "png", path = folder, 
+       width = 17, height = 15, unit = "cm", dpi = 300)
+
+ggsave(filename = "Barplots.png", 
+       plot = barplots, device = "png", path = folder, 
+       width = 17, height = 23, unit = "cm", dpi = 300)
+
+
+#For Paper
+Supp_fig1 <- ggarrange(lineplots, Rc_Perf_material,
+                       nrow = 2, heights = c(1, 0.85),
+                       labels = c("a", "b"))
+
+ggsave(filename = "Supplementary Figure 1.png", 
+       plot = Supp_fig1, device = "png", path = folder, 
+       width = 17, height = 18.5, unit = "cm", dpi = 300)
+
+ggsave(filename = "Fig1b.png", 
+       plot = barplots, device = "png", path = folder, 
+       width = 18, height = 16, unit = "cm", dpi = 300)
+```
+\newpage 
+# CITATIONS 
+
+Citations of R Studio and packages used. 
+
+```{r}
+
+print(citation(), style = "text")
+
+for(i in c("rmarkdown", requiredPackages)) {
+  print(i); print(citation(i), style = "text"); cat('\n')
+}
+```
+
