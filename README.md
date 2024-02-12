@@ -1,7 +1,7 @@
 # Robustness implementation in your data analysis
 <br />
 
-_NOTE._ This collection of scripts and macros has been developed for the following publication: XXX
+_NOTE._ This collection of scripts and macros has been developed for the following publication: (https://doi.org/10.1186/s13068-023-02445-6)
 
 <br />
 Collection of scripts to analyse: 
