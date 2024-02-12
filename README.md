@@ -2,8 +2,9 @@
 <br />
 
 _NOTE._ This collection of scripts and macros has been developed for the following publication:  
-*Torello Pianale, L., Caputo, F. & Olsson, L. Four ways of implementing robustness quantification in strain characterisation.  
-Biotechnol Biofuels 16, 195 (2023). https://doi.org/10.1186/s13068-023-02445-6*
+*Four ways of implementing robustness quantification in strain characterisation.  
+Torello Pianale, L., Caputo, F. & Olsson, L. Biotechnol Biofuels 16, 195 (2023).  
+https://doi.org/10.1186/s13068-023-02445-6*
 
 <br />
 Collection of scripts to analyse: 
