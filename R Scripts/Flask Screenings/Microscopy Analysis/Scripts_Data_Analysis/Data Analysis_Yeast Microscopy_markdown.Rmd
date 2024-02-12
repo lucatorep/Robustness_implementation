@@ -1,0 +1,598 @@
+---
+title: "Yeast Microcopy Analysis - Downstream Analysis"
+author: "Luca Torello Pianale"
+date: "August 2023"
+header-includes:
+  - \usepackage{fvextra}
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaksymbolleft={},showspaces = false,showtabs = false,breaklines,commandchars=\\\{\}}
+output:
+  pdf_document: default
+  html_document: default
+---
+### SCOPE OF THE MARKDOWN
+
+# Use of the Script + General info
+
+This script analyses the microscopy data coming from images analysed with Fiji (www.fiji.sc). Please, refer to the other directory to see such analysis. 
+For data analysis (this script), here are the files and folders needed:
+(1) "Script_data_analysis" folder contains the script to analyse the data (current one) and one with the functions needed. These files should NOT be removed from here.    
+(2) "Results" file contains the output coming from Fiji analyses.    
+(3) "OD_data" file contains the details about the OD at each time point analysed.  
+(4) "Figures" folder is the folder where all the figures from this data analysis will be saved.
+<br>
+Important to fill all the information about the experiment in the second chunk, so that the final data will contain it as well!
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, 
+                      tidy = "styler", fig.width = 10, fig.height = 12)
+
+options(dplyr.summarise.inform = FALSE)
+```
+\newpage
+# GETTING STARTED.
+
+Automatic installation of packages if required and loading.
+
+```{r libraries, message = FALSE}
+
+#Fresh Start
+rm(list = ls())
+try(dev.off(dev.list()["RStudioGD"]), silent=TRUE) 
+
+#R Version used
+R.Version()[["version.string"]]
+
+#Set new working directory
+folder <- getwd()
+folder <- gsub("(.+)\57Scripts(.+)", "\\1", folder)
+setwd(folder)
+
+#Additional Functions
+source(paste0(folder, "/Scripts_Data_Analysis/functions.R"))
+
+#Packages
+requiredPackages <- c("tidyverse", "purrr", "readxl", "writexl",
+                      "ggpubr", "ggplot2", "ggExtra", "janitor")
+
+loadinstall(requiredPackages)
+```
+\newpage
+# RESULT DATA.  
+
+Import the data for the phase contrast and the fluorescence channels (if present) and add missing information.   
+
+```{r Results}
+
+#List of all excel sheets in the Result file from Fiji
+file <- "/Results.xlsx"
+list <- excel_sheets(paste0(folder, "/Results.xlsx"))
+
+#General info
+info <- list(media = c("Delft", "CSH50", "HGSH50"),
+             colors_media = c("#5A5A5A", "#41ae76", "#A45BBD"),
+             strains = c("CEN.PK113-7D", "EthanolRed", "PE2"),
+             colors_strains = c("#333333", "#FC8D62", "#89ADFF"),
+             intraparams = c("Glycol. Flux", "Rib. Abund.", "OxSR", "UPR"))
+
+#Load OD data
+OD_data <- read_excel(paste0(folder, "/OD_data.xlsx"), col_names = TRUE) 
+
+#Load fluorescence data
+fluo_data <- map(
+  list,
+  ~ read_excel(paste0(folder, file), 
+               sheet = .x, skip = 1, col_names = TRUE) %>% 
+    select(c(Label, Mean)) %>%
+    mutate(Mean = as.numeric(Mean),
+           across(Mean, ~ replace(., is.nan(.), 0))) %>% 
+    cbind(sample = gsub("(.+)_(.+)", "\\1", .x))) %>%
+  list_rbind() %>%
+  mutate(channel = gsub("(.+):(.+)", "\\1", Label),
+         Cell = gsub("(.+):(.+)", "\\2", Label)) %>%
+  rename(value = "Mean") %>% 
+  select(-Label) 
+
+fluo_data1 <-   fluo_data %>% 
+  filter(str_detect(sample, "t0")) %>% 
+  mutate(sample = paste0(sample, "_C")) %>% 
+  rbind(., fluo_data %>% 
+          filter(str_detect(sample, "t0")) %>% 
+          mutate(sample = paste0(sample, "_S"))) %>%
+  rbind(., fluo_data %>% 
+          filter(str_detect(sample, "t0")) %>% 
+          mutate(sample = paste0(sample, "_D")))
+
+
+#Merge fluorescence and phase contrast information, add experimental details
+final_data <- fluo_data %>% 
+  filter(!str_detect(sample, "t0")) %>% 
+  rbind(., fluo_data1) %>%
+  mutate(
+    time = gsub("(.+)_(.+)_(.+)", "\\2", sample),
+    time = as.numeric(sub(".", "", time))*4,
+    strain = case_when(
+      startsWith(sample, "C") ~ "CEN.PK113-7D",
+      startsWith(sample, "P") ~ "PE2",
+      startsWith(sample, "E") ~ "EthanolRed"),
+    sensor = case_when(
+      startsWith(sample, "CR") ~ "RibUPR",
+      startsWith(sample, "PR") ~ "RibUPR",
+      startsWith(sample, "ER") ~ "RibUPR",
+      startsWith(sample, "CG") ~ "GlyOx",
+      startsWith(sample, "PG") ~ "GlyOx",
+      startsWith(sample, "EG") ~ "GlyOx"),
+    medium = case_when(
+      endsWith(sample, "D") ~ "Delft",
+      endsWith(sample, "S") ~ "HGSH50",
+      endsWith(sample, "C") ~ "CSH50"),
+    IntraParam = case_when(
+      sensor == "RibUPR" & channel == "Ratio_CR" ~ "Rib. Abund.",
+      sensor == "RibUPR" & channel == "Ratio_YR"  ~ "UPR",
+      sensor == "GlyOx" & channel == "Ratio_CR"  ~ "Glycol. Flux",
+      sensor == "GlyOx" & channel == "Ratio_YR"  ~ "OxSR")) %>% 
+  select(-c(sensor, channel, sample)) 
+
+str(final_data)
+str(OD_data)
+
+#Clean environment
+rm(list, file, list = ls()[startsWith(ls(), "fluo_data")]) 
+```
+\newpage
+# ANALYSIS BY CELL & BY TIME.  
+
+Analysis of the functions (phenotypes) for populations at each time point and for each cell across the whole run. Important to compute later on robustness.  
+
+```{r Additional_Analysis}
+
+#Computing summary of intracellular parameters for each timepoint
+summary <- final_data %>%
+  ungroup() %>%
+  group_by(strain, medium, time, IntraParam) %>%
+  summarise(across(.cols = value, 
+                   .fns = list(mean = ~ mean(.x, na.rm = TRUE),
+                               sd = ~ sd(.x, na.rm = TRUE))))
+
+#Computing summary of intracellular parameters across the whole run
+summary_whole <- summary %>%
+  rename(value = "value_mean") %>%
+  select(-value_sd) %>% 
+  ungroup() %>%
+  group_by(strain, medium, IntraParam) %>%
+  summarise(across(.cols = value, 
+                   .fns = list(mean = ~ mean(.x, na.rm = TRUE),
+                               sd = ~ sd(.x, na.rm = TRUE))))
+```
+<br>
+<br>
+# ROBUSTNESS.  
+
+## Robustness of functions in each frame.
+
+Computing the robustness of each function in each population in each timepoint (i.e. how homogeneous the function is among the cells in the same timepoint). 
+<br>
+
+```{r R_across_populations}
+
+#Data frame to be used to compute "m", the normalization factor in the Robustness formula
+dfm <- summary %>% 
+  rename(value = "value_mean")
+
+#Robustness computations
+R_pop <- final_data %>%
+  robust(., colR = value, dfm = dfm, groupm = c(IntraParam),
+         groupR = c(strain, medium, time, IntraParam)) 
+
+rm(dfm)
+```
+\newpage
+# SAVE DATA.
+
+Save data.  
+
+```{r SavingData}
+#Export the data frames in an .xlsx file (same file, different sheets)
+name <- "/Data_Analysed"
+sheets <- list("final_data" = final_data, 
+               "OD_data" = OD_data, 
+               "summary_bytimepoint" = summary, 
+               "summary_whole" = summary_whole,
+               "R(f)" = R_pop)
+write_xlsx(sheets, 
+           path = paste0(folder, paste0(name, ".xlsx")), 
+           use_zip64 = TRUE)
+
+#Clean environment
+rm(sheets, name)
+```
+\newpage
+# PLOTTING.  
+
+## Data Re-organisation  
+
+<br>
+
+```{r Reorganisation4Plotting, echo = FALSE}
+
+#Re-organizing data frames for plotting
+map(names(Filter(is.data.frame, as.list(.GlobalEnv))),
+    ~ eval(as.symbol(.x)) %>%
+       mutate(strain = factor(strain, levels = info[["strains"]]),
+              across(any_of(c("medium")),
+                     ~factor(medium, levels = info[["media"]])),
+              across(any_of(c("Phase")), 
+                     ~factor(Phase, levels = info[["phases"]])),
+              across(any_of(c("IntraParam")), 
+                     ~factor(IntraParam, levels = info[["intraparams"]])))) %>% 
+    setNames(names(Filter(is.data.frame, as.list(.GlobalEnv)))) %>% 
+    list2env(.GlobalEnv)
+```
+\newpage
+## Growth
+
+```{r GrowthCurves, echo = FALSE}
+
+#Growth
+Fig7b <- ggplot(data = OD_data) + 
+  aes(x = time, y = log(OD), colour = strain) +
+  stat_summary(fun = mean, geom = "line", linewidth = 1) +
+  stat_summary(fun.data = mean_sdl, geom = "errorbar", 
+               fun.args = list(mult = 1), width = 0.05) +
+  scale_x_continuous(breaks = seq(from = 0, 
+                                  to = max(unique(final_data$time)), 
+                                  by = 4)) +
+  scale_y_continuous(labels = function(x) format(x, nsmall = 1)) +
+  scale_color_manual(breaks = info[["strains"]], 
+                     values = info[["colors_strains"]]) +
+  labs(y = "ln(OD600) (a.u.)\n", x = "\nTime (h)") +
+  facet_grid(cols = vars(medium)) +
+  theme_light()+ 
+  theme(legend.position = "right",
+        axis.title = element_text(size = 9),
+        axis.text = element_text(size = 9),
+        panel.grid.minor = element_blank(),
+        panel.spacing.x = unit(1, "lines"), 
+        strip.background = element_rect(colour = "white", fill = "black"),
+        strip.text = element_text(size = 9, face = "bold.italic"),
+        plot.margin = unit(rep(0.3, 4), "cm"))
+
+Fig7b
+
+ggsave(filename = "Fig7b.png", 
+       plot = Fig7b, device = "png", path = paste0(folder, "/Figures"), 
+       width = 16, height = 5.5, unit = "cm", dpi = 300)
+```
+\newpage
+## lineplots fluorescence
+
+```{r GrowthCurves, echo = FALSE}
+
+#lineplots with violins
+for(i in unique(final_data$IntraParam)) {
+  
+  assign(paste0("lineviolin_", i), 
+         ggplot(data = subset(final_data, IntraParam == i)) +
+           aes(x = time, y = value, colour = strain) +
+           geom_violin(aes(group = time, fill = strain), 
+                       alpha = 0.3, linewidth = 0.2) + 
+           stat_summary(fun = mean, geom = "line", 
+                        linewidth = 0.7) +
+           stat_summary(fun = mean, geom = "point", 
+                        size = 0.7, color = "red") +
+           scale_x_continuous(breaks = seq(from = 0, 
+                                           to = max(unique(final_data$time)), 
+                                           by = 4)) +
+           scale_y_continuous(labels = function(x) format(x, nsmall = 1),
+                              breaks = scales::extended_breaks(n = 3)) +
+           scale_color_manual(breaks = info[["strains"]], 
+                              values = info[["colors_strains"]]) +
+           scale_fill_manual(breaks = info[["strains"]], 
+                              values = info[["colors_strains"]]) +
+           labs(y = "Fluorescence (a.u.)\n", x = "Time (h)") +
+           facet_grid(rows = vars(strain), 
+                      cols = vars(medium)) +
+           theme_light() +
+           theme(legend.position = "none",
+                 axis.title = element_text(size = 8),
+                 axis.text = element_text(size = 8),
+                 panel.grid.minor = element_blank(),
+                 strip.text = element_text(size = 8, 
+                                           face = "bold.italic", 
+                                           colour = "white"),
+                 strip.background = element_rect(colour = "white", 
+                                                 fill = "black"),
+                 plot.margin = unit(rep(0.2, 4), "cm")))
+}
+
+lineviolin_GlyOx <- ggarrange(`lineviolin_Glycol. Flux`,
+                              lineviolin_OxSR,
+                              ncol = 1, nrow = 2,
+                              labels = c("a", "b"))
+
+lineviolin_RibUPR <- ggarrange(`lineviolin_Rib. Abund.`,
+                               lineviolin_UPR,
+                               ncol = 1, nrow = 2,
+                               labels = c("a", "b"))
+
+ggsave(filename = "lineviolin_GlyOx.png", 
+         plot = lineviolin_GlyOx, 
+         device = "png", 
+         path = paste0(folder, "/Figures"), 
+         width = 16, height = 18, 
+         unit = "cm", dpi = 300)
+
+ggsave(filename = "lineviolin_RibUPR.png", 
+         plot = lineviolin_RibUPR, 
+         device = "png", 
+         path = paste0(folder, "/Figures"), 
+         width = 16, height = 18, 
+         unit = "cm", dpi = 300)
+```
+\newpage
+## Scatterplots
+
+```{r GrowthCurves, echo = FALSE}
+
+Fig7d <- ggplot(data = final_data %>%
+                  filter(time == 20) %>%
+                  pivot_wider(names_from = IntraParam, values_from = value)) +
+  aes(x = OxSR, y = `Glycol. Flux`, colour = strain) +
+  geom_point(size = 0.5, alpha = 0.6) +
+  scale_y_continuous(labels = function(x) format(x, nsmall = 0),
+                     breaks = scales::extended_breaks(n = 3)) +
+  scale_x_continuous(labels = function(x) format(x, nsmall = 0),
+                     breaks = scales::extended_breaks(n = 3)) +
+  scale_color_manual(breaks = info[["strains"]], 
+                     values = info[["colors_strains"]]) +
+  labs(y = "Glycolytic Flux\nFluorescence (a.u.)\n",
+       x = "Oxidative Stress Response\nFluorescence (a.u.)") +
+  facet_grid(cols = vars(medium)) +
+  guides(colour = guide_legend(override.aes = list(size=3))) +
+  theme_light() +
+  theme(legend.position = "right",
+        axis.title = element_text(size = 8),
+        axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(size = 8),
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 8,
+                                  face = "bold.italic", 
+                                  colour = "white"),
+        strip.background = element_rect(colour = "white",
+                                        fill = "black"),
+        plot.margin = unit(rep(0.2, 4), "cm"))
+
+Fig7d
+
+ggsave(filename = "Fig7d.png", 
+         plot = Fig7d, 
+         device = "png", 
+         path = paste0(folder, "/Figures"), 
+         width = 14, height = 5, 
+         unit = "cm", dpi = 300)
+
+
+#Scatterplot
+for(i in unique(final_data$strain)) {
+  assign(paste0("Scatter_GlyOx_", i), 
+         ggplot(data = final_data %>%
+                  filter(strain == i) %>% 
+                  pivot_wider(names_from = IntraParam, values_from = value)) +
+           aes(x = OxSR, y = `Glycol. Flux`, colour = strain) +
+           geom_point(size = 0.5) +
+           scale_y_continuous(labels = function(x) format(x, nsmall = 0),
+                              breaks = scales::extended_breaks(n = 3)) +
+           scale_x_continuous(labels = function(x) format(x, nsmall = 0),
+                              breaks = scales::extended_breaks(n = 3)) +
+           scale_color_manual(breaks = info[["strains"]], 
+                              values = info[["colors_strains"]]) +
+           labs(y = "Glycolytic Flux\nFluorescence (a.u.)\n", 
+                x = "Oxidative Stress Response\nFluorescence (a.u.)") +
+           facet_grid(rows = vars(medium), 
+                      cols = vars(time)) +
+           theme_light() +
+           theme(legend.position = "none",
+                 axis.title = element_text(size = 8),
+                 axis.text.y = element_text(size = 8),
+                 axis.text.x = element_text(size = 8,
+                                            angle = 45,
+                                            hjust = 1),
+                 panel.grid.minor = element_blank(),
+                 strip.text = element_text(size = 8, 
+                                           face = "bold.italic", 
+                                           colour = "white"),
+                 strip.background = element_rect(colour = "white", 
+                                                 fill = "black"),
+                 plot.margin = unit(rep(0.2, 4), "cm")))
+}  
+  
+Scatter_GlyOx <- ggarrange(`Scatter_GlyOx_CEN.PK113-7D`,
+          Scatter_GlyOx_EthanolRed,
+          Scatter_GlyOx_PE2,
+          ncol = 1, nrow = 3,
+          labels = c("a", "b", "c"))
+
+ggsave(filename = "Scatter_GlyOx.png", 
+         plot = Scatter_GlyOx, 
+         device = "png", 
+         path = paste0(folder, "/Figures"), 
+         width = 16, height = 21, 
+         unit = "cm", dpi = 300)
+
+
+for(i in unique(final_data$strain)) {
+  assign(paste0("Scatter_RibUPR_", i), 
+         ggplot(data = final_data %>%
+                  filter(strain == i) %>% 
+                  pivot_wider(names_from = IntraParam, values_from = value)) +
+           aes(x = UPR, y = `Rib. Abund.`, colour = strain) +
+           geom_point(size = 0.5) +
+           scale_y_continuous(labels = function(x) format(x, nsmall = 0),
+                              breaks = scales::extended_breaks(n = 3)) +
+           scale_x_continuous(labels = function(x) format(x, nsmall = 0),
+                              breaks = scales::extended_breaks(n = 3)) +
+           scale_color_manual(breaks = info[["strains"]], 
+                              values = info[["colors_strains"]]) +
+           labs(y = "Ribosome Abundance\nFluorescence (a.u.)\n", 
+                x = "Unfolded Protein Response\nFluorescence (a.u.)") +
+           facet_grid(rows = vars(medium), 
+                      cols = vars(time)) +
+           theme_light() +
+           theme(legend.position = "none",
+                 axis.title = element_text(size = 8),
+                 axis.text.y = element_text(size = 8),
+                 axis.text.x = element_text(size = 8,
+                                            angle = 45,
+                                            hjust = 1),
+                 strip.text = element_text(size = 8, 
+                                           face = "bold.italic", 
+                                           colour = "white"),
+                 panel.grid.minor = element_blank(),
+                 strip.background = element_rect(colour = "white", 
+                                                 fill = "black"),
+                 plot.margin = unit(rep(0.2, 4), "cm")))
+}  
+  
+Scatter_RibUPR <- ggarrange(`Scatter_RibUPR_CEN.PK113-7D`,
+          Scatter_RibUPR_EthanolRed,
+          Scatter_RibUPR_PE2,
+          ncol = 1, nrow = 3,
+          labels = c("a", "b", "c"))
+
+ggsave(filename = "Scatter_RibUPR.png", 
+         plot = Scatter_RibUPR, 
+         device = "png", 
+         path = paste0(folder, "/Figures"), 
+         width = 16, height = 21, 
+         unit = "cm", dpi = 300)
+
+```
+\newpage
+## Fluorescence Summary
+
+```{r GrowthCurves, echo = FALSE}
+#boxplots
+Fig7c <- ggplot(data = summary) + 
+  aes(x = strain, y = value_mean, fill = strain) +
+  geom_boxplot(alpha = 0.7,
+               outlier.size = 0.5) +
+  stat_summary(fun = mean, geom = "point", color = "red",
+               position = position_dodge(width = 0.9)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)), 
+                     labels = function(x) format(x, nsmall = 1),
+                     breaks = scales::extended_breaks(n = 3)) +
+  scale_fill_manual(breaks = info[["strains"]], 
+                    values = info[["colors_strains"]]) +
+  facet_wrap(~ IntraParam, 
+             ncol = 4, scales = "free") +
+  labs(x = "", y = "Fluorescence (a.u.)\n") +
+  theme_light() +
+  theme(legend.position = "right",
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 8),
+        axis.ticks.x = element_blank(),
+        strip.placement.y = "outside",
+        strip.background = element_rect(colour = "black", fill = "black"),
+        strip.text = element_text(size = 8, 
+                                  face = "bold.italic", 
+                                  colour = "white"),
+
+        panel.spacing.y = unit(1, "lines"), 
+        panel.grid.minor = element_blank(), 
+        panel.grid.major.x = element_blank(),
+        plot.margin = unit(rep(0.3, 4), "cm"))
+
+ggsave(filename = "Fig7c.png", 
+       plot = Fig7c, device = "png", path = paste0(folder, "/Figures"), 
+       width = 17, height = 5, unit = "cm", dpi = 300)
+```
+\newpage
+## Robustness
+
+```{r GrowthCurves, echo = FALSE}
+#boxplots
+Fig8b <- ggplot(data = R_pop) + 
+  aes(x = strain, y = Rn, fill = strain) +
+  geom_boxplot(alpha = 0.7,
+               outlier.size = 0.5) +
+  stat_summary(fun = mean, geom = "point", color = "red",
+               position = position_dodge(width = 0.9)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)), 
+                     labels = function(x) format(x, nsmall = 1),
+                     breaks = scales::extended_breaks(n = 3)) +
+  scale_fill_manual(breaks = info[["strains"]], 
+                    values = info[["colors_strains"]]) +
+  facet_wrap(~ IntraParam, 
+             ncol = 4, scales = "free") +
+  labs(x = "", y = "R(p) (a.u.)\n") +
+  theme_light() +
+  theme(legend.position = "top",
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 8),
+        axis.ticks.x = element_blank(),
+        strip.placement.y = "outside",
+        strip.background = element_rect(colour = "black", fill = "black"),
+        strip.text = element_text(size = 8, 
+                                  face = "bold.italic", 
+                                  colour = "white"),
+
+        panel.spacing.y = unit(1, "lines"), 
+        panel.grid.minor = element_blank(), 
+        panel.grid.major.x = element_blank(),
+        plot.margin = unit(rep(0.3, 4), "cm"))
+
+ggsave(filename = "Fig8b.png", 
+       plot = Fig8b, device = "png", path = paste0(folder, "/Figures"), 
+       width = 15, height = 6, unit = "cm", dpi = 300)
+
+
+Supp_fig11 <- ggplot(data = R_pop) +
+  aes(x = strain, y = Rn, fill = medium) +
+  geom_boxplot(outlier.size = 0.5) +
+  stat_summary(fun = mean, geom = "point", 
+               color = "red", size = 1,
+               position = position_dodge(width = 0.75)) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.05)), 
+                     labels = function(x) format(x, nsmall = 1)) +
+  scale_fill_manual(breaks = info[["media"]], 
+                    values = info[["colors_media"]]) +
+  labs(x = "", y = "R(p) (a.u.)\n") +
+  facet_grid(cols = vars(medium), 
+             rows = vars(IntraParam),
+             scales = "free") +
+  theme_light() +
+  theme(legend.position = "none", 
+        axis.text.x = element_text(size = 8, face = "bold",
+                                   colour = info[["colors_strains"]],
+                                   angle = 30,
+                                   hjust = 1),
+        axis.text.y = element_text(size = 8),
+        strip.background = element_rect(colour = "white", 
+                                        fill = "black"),
+        strip.text = element_text(size = 8, 
+                                  face = "bold.italic"),
+        panel.spacing.y = unit(0.5, "lines"), 
+        panel.grid.minor.x = element_blank(), 
+        panel.grid.major.x = element_blank(),
+        plot.margin = unit(rep(0.1, 4), "cm"))
+
+ggsave(filename = "Supp_fig11.png", 
+       plot = Supp_fig11, device = "png", path = paste0(folder, "/Figures"), 
+       width = 16, height = 15, unit = "cm", dpi = 300)
+
+```
+
+\newpage  
+# CITATIONS 
+
+Citations of R Studio and packages used in this script. 
+
+```{r Citations, echo = FALSE}
+
+print(citation(), style = "text")
+
+for(i in c("rmarkdown", requiredPackages)) {
+  print(i); print(citation(i), style = "text"); cat('\n')
+}
+```
