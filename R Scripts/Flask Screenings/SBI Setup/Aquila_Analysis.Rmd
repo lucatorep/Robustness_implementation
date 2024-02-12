@@ -174,11 +174,13 @@ growth_param <- bind_cols(growth_param, inf_points) %>%
   select(-c(x, y, y0, r2)) %>%
   pivot_longer(c(lag, mumax), names_to = "Function", values_to = "value")
 
-#Rearrange data 
+
+
+#Edit data to correct for false predictions
+
 growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %in% c("HGSH50", "BiH50", "SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 1] <- 48
 growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %in% c("HGSH50", "BiH50", "SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 2] <- 47.9
 growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %in% c("HGSH50", "BiH50", "SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 3] <- 47.99
-
 growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %in% c("HGSH50", "BiH50", "SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 1] <- 0.001
 growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %in% c("HGSH50", "BiH50", "SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 2] <- 0.0011
 growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %in% c("HGSH50", "BiH50", "SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 3] <- 0.0012
@@ -187,7 +189,6 @@ growth_param$value[growth_param$strain == "CEN.PK113-7D" & growth_param$medium %
 growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OHH50", "WSH50", "BiH50", "SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 1] <- 48
 growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OHH50", "WSH50", "BiH50", "SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 2] <- 47.9
 growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OHH50", "WSH50", "BiH50", "SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 3] <- 47.99
-
 growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OHH50", "WSH50", "BiH50", "SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 1] <- 0.001
 growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OHH50", "WSH50", "BiH50", "SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 2] <- 0.0011
 growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OHH50", "WSH50", "BiH50", "SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 3] <- 0.0012
@@ -196,7 +197,6 @@ growth_param$value[growth_param$strain == "PE2" & growth_param$medium %in% c("OH
 growth_param$value[growth_param$strain == "EthanolRed" & growth_param$medium %in% c("SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 1] <- 48
 growth_param$value[growth_param$strain == "EthanolRed" & growth_param$medium %in% c("SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 2] <- 47.9
 growth_param$value[growth_param$strain == "EthanolRed" & growth_param$medium %in% c("SLRH50") & growth_param$Function == "lag" & growth_param$replicate == 3] <- 47.99
-
 growth_param$value[growth_param$strain == "EthanolRed" & growth_param$medium %in% c("SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 1] <- 0.001
 growth_param$value[growth_param$strain == "EthanolRed" & growth_param$medium %in% c("SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 2] <- 0.0011
 growth_param$value[growth_param$strain == "EthanolRed" & growth_param$medium %in% c("SLRH50") & growth_param$Function == "mumax" & growth_param$replicate == 3] <- 0.0012
@@ -317,8 +317,6 @@ R_s <- growth_param %>%
 ```
 
 # EXPORT DATA.
-
-AA.  
 
 ```{r Export_data}
 
